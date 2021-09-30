@@ -4,9 +4,9 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 Project: sigmacover.py
-Date: xx/xx/2021
+Date: 30/09/2021
 Author: frack113
-Version: 1.x
+Version: 1.2b1
 Description: 
     get cover of the rules vs backend
 Requirements:
@@ -18,7 +18,6 @@ Todo:
     - have idea
 """
 
-
 import re
 import subprocess
 import pathlib
@@ -28,41 +27,84 @@ import copy
 import platform
 import argparse
 
-def get_sigmac(name,conf):
-    infos = []
-    if conf == None:
-        options = ["python","../tools/sigmac","-t",name,"--debug","-rI","-o","dump.txt","../rules"]
-    else:
-        options = ["python","../tools/sigmac","-t",name,"-c",conf,"--debug","-rI","-o","dump.txt","../rules"]
-    if platform.system() == "Windows":
-        si = subprocess.STARTUPINFO()
-        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        ret = subprocess.run(options,
-                             stdout=subprocess.PIPE,
-                             stderr=subprocess.STDOUT,
-                             startupinfo=si
-                             )
-        my_regex = "Convertion Sigma input \S+\\\\(\w+\.yml) (\w+)"
-    else:
-        ret = subprocess.run(options,
-                             stdout=subprocess.PIPE,
-                             stderr=subprocess.STDOUT,
-                             )
-        my_regex = "Convertion Sigma input \S+/(\w+\.yml) (\w+)"   
-    if not ret.returncode == 0:
-        print (f"error {ret.returncode} in sigmac")
-    log = pathlib.Path("sigmac.log")
-    with log.open() as f:
-        lines = f.readlines()
-        for line in lines:
-            if "Convertion Sigma input" in line:
-                info = re.findall(my_regex,line)[0]
-                infos.append(info)
-    log.unlink()
-    dump = pathlib.Path("dump.txt")
-    if dump.exists():
-        dump.unlink()
-    return infos            
+class sigma_class:
+    
+    def __init__(self):
+        self.path_sigmac = "c:/sigma/"
+        self.os = platform.system()
+        self.backends_lst = []
+        self.config_dict = {}
+
+    def get_all_rules(self):
+        pass
+
+    def get_all_backend(self):
+        options = ["python",self.path_sigmac+"tools/sigmac","-h"]
+        info = self.run_sigmac("stdout",options)
+        str_list = re.findall("--target {(\S+)}",info.decode())[0]
+        self.backends_lst = str_list.split(",")
+        self.backends_lst.sort()
+
+    def get_all_config(self):
+        configs = pathlib.Path(backends.path_sigmac+"tools/config").glob("*.yml")
+        for config in configs:
+            with config.open("r",encoding="UTF-8") as file:
+                data=ruyaml.safe_load(file)
+                if "backends" in data:
+                    for name in data["backends"]:
+                        self.config_dict[name] = config.name
+    
+    def run_sigmac (self,info,options):
+        if self.os == "Windows":
+            si = subprocess.STARTUPINFO()
+            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            ret = subprocess.run(options,
+                                 stdout=subprocess.PIPE,
+                                 stderr=subprocess.STDOUT,
+                                 startupinfo=si
+                                 )
+        else:
+            ret = subprocess.run(options,
+                                 stdout=subprocess.PIPE,
+                                 stderr=subprocess.STDOUT,
+                                 ) 
+        if info == "code":
+            return ret.returncode
+        else:
+            return ret.stdout
+
+
+    def get_sigmac(self,name,config_name):
+        infos = []
+        options = ["python",
+                   self.path_sigmac+"tools/sigmac",
+                   "-t",name,
+                   "-c",self.path_sigmac+"tools/config/"+config_name,
+                   "--debug",
+                   "-rI",
+                   "-o","dump.txt",
+                   self.path_sigmac+"rules"
+                   ]
+        if self.os == "Windows":
+            my_regex = "Convertion Sigma input \S+\\\\(\w+\.yml) (\w+)"
+        else:
+            my_regex = "Convertion Sigma input \S+/(\w+\.yml) (\w+)"   
+        sigmac_code = self.run_sigmac("code",options)
+        if not sigmac_code == 0:
+            print (f"error {sigmac_code} in sigmac")
+
+        log = pathlib.Path("sigmac.log")
+        with log.open() as f:
+            lines = f.readlines()
+            for line in lines:
+                if "Convertion Sigma input" in line:
+                    info = re.findall(my_regex,line)[0]
+                    infos.append(info)
+        log.unlink()
+        dump = pathlib.Path("dump.txt")
+        if dump.exists():
+            dump.unlink()
+        return infos     
 
 def update_dict(my_dict,my_data,backend):
     for file,state in my_data:
@@ -88,84 +130,42 @@ def create_md(data):
             ligne = ligne.replace("NO TEST",dont)
             file.write(ligne)
 
-#the backend dict command line options
-backend_dict = {
-    "ala": None,
-    "ala-rule": None,
-    "arcsight": "../tools/config/elk-winlogbeat.yml",
-    "arcsight-esm": "../tools/config/elk-winlogbeat.yml",
-    "carbonblack": "../tools/config/elk-winlogbeat.yml",
-    "chronicle": "../tools/config/elk-winlogbeat.yml",
-    "crowdstrike": "../tools/config/elk-winlogbeat.yml",
-    "csharp" : None,
-    "devo": "../tools/config/elk-winlogbeat.yml",
-    "ee-outliers": "../tools/config/winlogbeat-modules-enabled.yml",
-    "elastalert": "../tools/config/winlogbeat-modules-enabled.yml",
-    "elastalert-dsl": "../tools/config/winlogbeat-modules-enabled.yml",
-    "es-dsl": "../tools/config/winlogbeat-modules-enabled.yml",
-    "es-eql": "../tools/config/winlogbeat-modules-enabled.yml",
-    "es-qs": "../tools/config/winlogbeat-modules-enabled.yml",
-    "es-qs-lr": "../tools/config/logrhythm_winevent.yml",
-    "es-rule": "../tools/config/winlogbeat-modules-enabled.yml",
-    "es-rule-eql": "../tools/config/winlogbeat-modules-enabled.yml",
-    "fireeye-helix": "../tools/config/elk-winlogbeat.yml",
-    "graylog" : None,
-    "grep" : None,
-    "humio": "../tools/config/elk-winlogbeat.yml",
-    "kibana": "../tools/config/winlogbeat-modules-enabled.yml",
-    "kibana-ndjson": "../tools/config/winlogbeat-modules-enabled.yml",
-    "lacework" : None,
-    "limacharlie" : None,
-    "logiq" : None,
-    "logpoint" : None,
-    "mdatp" : None,
-    "netwitness" : None,
-    "netwitness-epl" : None,
-    "opensearch-monitor": "../tools/config/winlogbeat.yml",
-    "powershell" : None,
-    "qradar" : None,
-    "qualys" : None,
-    "sentinel-rule" : None,
-    "splunk": "../tools/config/splunk-windows.yml",
-    "splunkdm": "../tools/config/splunk-windows.yml",
-    "splunkxml": "../tools/config/splunk-windows.yml",
-    "sql": "../tools/config/elk-winlogbeat.yml",
-    "sqlite": "../tools/config/elk-winlogbeat.yml",
-    "stix": "../tools/config/stix2.0.yml",
-    "sumologic" : None,
-    "sumologic-cse" : None,
-    "sumologic-cse-rule" : None,
-    "sysmon": "../tools/config/elk-windows.yml",
-    "uberagent" : None,
-    "xpack-watcher": "../tools/config/winlogbeat-modules-enabled.yml",
-    }
 
 print("""
 ███ ███ ████ █▄┼▄█ ███ ┼┼ ███ ███ █▄█ ███ ███
 █▄▄ ┼█┼ █┼▄▄ █┼█┼█ █▄█ ┼┼ █┼┼ █┼█ ███ █▄┼ █▄┼
 ▄▄█ ▄█▄ █▄▄█ █┼┼┼█ █┼█ ┼┼ ███ █▄█ ┼█┼ █▄▄ █┼█
-                  v1.1 bugfix
+                  v1.x beta
 please wait during the tests
 """)
 argparser = argparse.ArgumentParser(description="Check Sigma rules with all backend.")
-argparser.add_argument("--target", "-t", choices=["yaml","json","md"], help="Output target format")
+argparser.add_argument("--target", "-t", choices=["yaml","json"], help="Output target format")
 cmdargs = argparser.parse_args()
 
 if cmdargs.target == None:
     print("No outpout use -h to see help")
     exit()
-  
+
+backends = sigma_class()
+print ("get backend list")
+backends.get_all_backend()
+print ("get config list")
+backends.get_all_config()
+
 #init dict of all rules
-default_key_test = {key : "NO TEST" for key in backend_dict.keys()}
+default_key_test = {key : "NO TEST" for key in backends.backends_lst}
 the_dico ={}
-rules = pathlib.Path("../rules").glob("**/*.yml")
+rules = pathlib.Path(backends.path_sigmac+"rules").glob("**/*.yml")
 for rule in rules:
     the_dico[rule.name] = copy.deepcopy(default_key_test)
 
-#Check all the backend    
-for name,opt in backend_dict.items():
+#Check all the backend
+for name in backends.backends_lst:
     print (f"check backend : {name}")
-    result = get_sigmac(name,opt)
+    if name in backends.config_dict:
+        result = backends.get_sigmac(name,backends.config_dict[name])
+    else:
+        result = backends.get_sigmac(name,"elk-winlogbeat.yml")
     update_dict(the_dico,result,name)
 
 #Save
@@ -178,5 +178,4 @@ elif cmdargs.target.lower() == "json" :
     with cover.open("w") as file:
         json_dumps_str = json.dumps(the_dico, indent=4)
         file.write(json_dumps_str)
-else:
-    create_md(the_dico)
+
