@@ -56,8 +56,9 @@ class Rule:
         self.sql_cursor.execute('DROP TABLE IF EXISTS test;')
         self.sql_cursor.execute(f'CREATE TABLE test(name,{str_field});')
         empty = ',"NO TEST"'*len(data)
-        for name in self.get_all_rule_name():
-            self.sql_cursor.execute(f'INSERT INTO test VALUES("{name}"{empty});')
+        for name in self.get_all_rule_name():     
+            self.sql_cursor.execute(f'INSERT INTO test VALUES("{name[0]}"{empty});')
+
 
     def update_test_table(self,data):
         str_rule_name = data[0]
