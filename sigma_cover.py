@@ -25,17 +25,68 @@ import pathlib
 import ruyaml
 import platform
 import json
+import sqlite3
 
+class Rule:
+    """ for the rule information"""
+    def __init__(self, sql_cursor):
+        self.sql_cursor = sql_cursor
+        self.sql_cursor.execute('DROP TABLE IF EXISTS rules;')
+        self.sql_cursor.execute('CREATE TABLE rules(id,name);')
 
+    def insert_rule(self,data):
+        self.sql_cursor.execute(f'INSERT INTO rules VALUES ("{data[0]}","{data[1]}");')
+
+    def get_all_rule_name(self):
+        self.sql_cursor.execute('SELECT name FROM rules;')
+        return self.sql_cursor.fetchall()
+    
+    def load_all_rules(self,path):
+        yaml_files = pathlib.Path(f"{path}rules").glob("**/*.yml")
+        for yaml_file in yaml_files:
+            with yaml_file.open('r',encoding="UTF-8") as file:
+                yaml = ruyaml.load(file,Loader=ruyaml.Loader)
+                uuid = yaml["id"]
+                name = yaml_file.name
+                self.insert_rule([uuid,name])
+                
+    def create_test_table(self,data):
+        str_field = ','.join(data)
+        str_field = str_field.replace("-","_")
+        self.sql_cursor.execute('DROP TABLE IF EXISTS test;')
+        self.sql_cursor.execute(f'CREATE TABLE test(name,{str_field});')
+        empty = ',"NO TEST"'*len(data)
+        for name in self.get_all_rule_name():
+            self.sql_cursor.execute(f'INSERT INTO test VALUES("{name}"{empty});')
+
+    def update_test_table(self,data):
+        str_rule_name = data[0]
+        str_field_name = data[1].replace("-","_")
+        status = data[2]
+        self.sql_cursor.execute(f'UPDATE test SET {str_field_name}="{status}" WHERE name="{str_rule_name}";')
+
+    def get_all_test(self):
+        self.sql_cursor.execute('SELECT * FROM test;')
+        return self.sql_cursor.fetchall()
+        
+class Backend:
+    """ for the backend information"""
+    def __init__(self, sql_cursor):
+        self.sql_cursor = sql_cursor
+        self.sql_cursor.execute('DROP TABLE IF EXISTS backends;')
+        self.sql_cursor.execute('CREATE TABLE backends(name,config);')
+
+    def insert_backend(self,data):
+        self.sql_cursor.execute(f'INSERT INTO backends VALUES ("{data[0]}","{data[1]}");')
+        
+    def select_backend(self,data):
+        pass
+    
 class Sigmac:
+    """ for interact with sigmac """
     def __init__(self, path_sigmac):
         self.path_sigmac = path_sigmac
         self.os = platform.system()
-        self.backends_list = []
-        self.config_dictionary = {}
-
-    def get_all_rules(self):
-        pass
 
     def get_all_backend(self):
         options = ["python", f"{self.path_sigmac}tools/sigmac", "-h"]
@@ -45,19 +96,21 @@ class Sigmac:
         FIRST_APPARITION = 0
         string_list = re.findall(r"--target {(\S+)}", info.decode())[FIRST_APPARITION]
 
-        self.backends_list = string_list.split(",")
-        self.backends_list.sort()
+        backends_list = string_list.split(",")
+        backends_list.sort()
+        return backends_list
 
     def get_all_config(self):
         configs_list = pathlib.Path(f"{self.path_sigmac}tools/config").glob("*.yml")
-
+        config_dictionary = {}
         for config in configs_list:
             with config.open("r", encoding="UTF-8") as file:
                 data = ruyaml.safe_load(file)
 
                 if "backends" in data:
                     for name in data["backends"]:
-                        self.config_dictionary[name] = config.name
+                        config_dictionary[name] = config.name
+        return config_dictionary
 
     def run_sigmac(self, info, options):
         # STARTUPINFO() is need only for windows
@@ -123,50 +176,23 @@ class Sigmac:
         return infos
 
 
-def initialise_rules(backends):
-    rules = pathlib.Path(f"{backends.path_sigmac}rules").glob("**/*.yml")
-
-    return {
-        rule.name: {key: "NO TEST" for key in backends.backends_list} for rule in rules
-    }
+def yml_saving_strategy(rules_list, file):
+    ruyaml.dump(rules_list, file, Dumper=ruyaml.RoundTripDumper)
 
 
-def check_backends(rules_dictionary, backends):
-    def update_dictionary(dictionary, data, backend):
-        for file, state in data:
-            dictionary[file][backend] = state
-
-    for name in backends.backends_list:
-        print(f"Check backend: {name}")
-
-        result = (
-            backends.get_sigmac(name, backends.config_dictionary[name])
-            if name in backends.config_dictionary
-            else backends.get_sigmac(name, "elk-winlogbeat.yml")
-        )
-
-        update_dictionary(rules_dictionary, result, name)
-
-    return rules_dictionary
+def json_saving_strategy(rules_list, file):
+    file.write(json.dumps(rules_list, indent=4))
 
 
-def yml_saving_strategy(rules_dictionary, file):
-    ruyaml.dump(rules_dictionary, file, Dumper=ruyaml.RoundTripDumper)
-
-
-def json_saving_strategy(rules_dictionary, file):
-    file.write(json.dumps(rules_dictionary, indent=4))
-
-
-def no_saving_strategy(rules_dictionary, file):
+def no_saving_strategy(rules_list, file):
     pass
 
 
-def save_results(dictionary,file_extension, saving_strategy):
+def save_results(rules_list,file_extension, saving_strategy):
     cover = pathlib.Path(f"sigmacover.{file_extension}")
 
     with cover.open("w") as file:
-        saving_strategy(dictionary,file)
+        saving_strategy(rules_list,file)
 
 
 def main():
@@ -189,15 +215,38 @@ def main():
         print("No outpout use -h to see help")
         exit()
 
-    backends = Sigmac(path_sigmac=args.sigma)
+    con = sqlite3.connect('example.db')
+    cur = con.cursor()
+    
+    rules = Rule(sql_cursor=cur)
+    backends = Backend(sql_cursor=cur)
+    sigma_cmd = Sigmac(path_sigmac=args.sigma)
 
-    print("Get backend and config list")
+    #get all rule
+    rules.load_all_rules(args.sigma)
 
-    backends.get_all_backend()
-    backends.get_all_config()
+    #get the correct config name
+    config_dict = sigma_cmd.get_all_config()
 
-    rules_dictionary = initialise_rules(backends)
-    rules_dictionary = check_backends(rules_dictionary, backends)
+    
+    #get all backends name
+    all_backend = sigma_cmd.get_all_backend()
+
+    #create result test table
+    rules.create_test_table(all_backend)
+    
+    for name in all_backend:
+        print(f"Checking backend: {name}")
+        config_name = config_dict[name] if name in config_dict else "elk-winlogbeat.yml"
+        backends.insert_backend([name,config_name])
+        # test backend
+        results = sigma_cmd.get_sigmac(name, config_name)
+        for rule_name,status in results:
+            rules.update_test_table([rule_name,name,status])
+
+    #save result  
+    con.commit()
+
 
     TARGET_FORMAT = args.target.lower()
 
@@ -211,8 +260,9 @@ def main():
         saving_strategy = json_saving_strategy
         file_extension = "json"
 
-    save_results(rules_dictionary,file_extension, saving_strategy)
+    save_results(rules.get_all_test(),file_extension, saving_strategy)
 
+    con.close()
 
 if __name__ == "__main__":
     print(
